@@ -20,48 +20,22 @@ on:
     types: [created]
   workflow_dispatch:
       inputs:
-          sha:
-            description: 'commit sha'
-            required: true
-          test_result:
-            description: 'test result'
+          platform:
+            description: 'runs-on argument'
             required: false
-          test_results_url:
-            description: 'test results url'
-            required: true
+          args:
+            description: 'argument'
+            required: false
 jobs:
-  Check-Team-Membership:
-    runs-on: ubuntu-latest
-    name: Check Team Membership
-    if: startsWith( github.event.comment.body, '/bot' )
-    steps:
-      - name: Get Membership
-        id: check_team_membership
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.CI_TEAM_TOKEN }}
-          script: |
-            try {
-              const { data: membership } = await github.rest.teams.getMembershipForUserInOrg({
-                org: context.repo.owner,
-                team_slug: 'tensorrt-llm-ci-approvers',
-                username: 'chzblych',
-              });
-              if (membership.state != 'active') {
-                core.setFailed('only member in [tensorrt-llm-ci-approvers] can run', membership)
-              }
-            } catch (error) {
-              console.log('check membership failed:', error);
-              core.setFailed('only member in [tensorrt-llm-ci-approvers] can run')
-            }
-
   Authorization:
     name: Authorization
     runs-on: blossom
     outputs:
       args: ${{ env.args }}
-    needs: [Check-Team-Membership]
+
     # This job only runs for pull request comments
+    if: |
+         github.event.comment.body == '/build' && (github.actor == 'niukuo' || github.actor == 'niukuo')
     steps:
       - name: Check if comment is issued by authorized person
         run: blossom-ci
@@ -104,28 +78,14 @@ jobs:
           CI_SERVER: ${{ secrets.CI_SERVER }}
           REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  Upload-Test:
-    name: Upload test results
-    runs-on: linux-amd64-cpu4
-    if: github.event_name == 'workflow_dispatch'
+  Upload-Log:
+    name: Upload log
+    runs-on: blossom
+    if : github.event_name == 'workflow_dispatch'
     steps:
-      - name: Collect test result
-        run: rm -rf results && mkdir results && cd results && curl --user svc_tensorrt:${{ secrets.ARTIFACTORY_TOKEN }} -L ${{ github.event.inputs.test_results_url }} | tar -xz
-      - name: Create test summary
-        id: test_summary
-        uses: test-summary/action@dist
-        with:
-          paths: results/**/results*.xml
-      - name: Update commit status
-        uses: actions/github-script@v6
-        with:
-          script: |
-            github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              context: 'blossom-ci',
-              sha: '${{ github.event.inputs.sha }}',
-              target_url: 'https://github.com/NVIDIA/TensorRT-LLM/actions/runs/' + context.runId,
-              state: '${{ steps.test_summary.outputs.failed > 0 && 'failure' || github.event.inputs.test_result || 'success' }}',
-              description: '${{ steps.test_summary.outputs.passed }} passed, ${{ steps.test_summary.outputs.failed }} failed, ${{ steps.test_summary.outputs.skipped }} skipped',
-            })
+      - name: Jenkins log for pull request ${{ fromJson(github.event.inputs.args).pr }} (click here)
+        run: blossom-ci
+        env:
+          OPERATION: 'POST-PROCESSING'
+          CI_SERVER: ${{ secrets.CI_SERVER }}
+          REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
